@@ -43,47 +43,54 @@ export class UserController {
     }
 
     async login(req: Request, res: Response): Promise < any >{
-        const { email, password } = req.body;
+    console.log('--- TENTATIVA DE LOGIN INICIADA ---'); // ⬅️ RASTREADOR 1
+    const { email, password } = req.body;
+    console.log(`Dados recebidos - Email: ${email}`); // ⬅️ RASTREADOR 2
 
-        try {
-            const userRepository = AppDataSource.getRepository(User);
+    try {
+        const userRepository = AppDataSource.getRepository(User);
 
-            // 1. Busca o usuário pelo e-mail
-            const user = await userRepository.findOneBy({ email });
-            if (!user) {
-                return res.status(401).json({ mensagem: 'E-mail ou senha incorretos!' });
-            }
+        const user = await userRepository.findOneBy({ email });
+        console.log('Usuário encontrado no banco:', user ? 'SIM' : 'NÃO'); // ⬅️ RASTREADOR 3
 
-            // 2. Compara a senha digitada com a criptografada no banco
-            const isValidPassword = await bcrypt.compare(password, user.password);
-            if (!isValidPassword) {
-                return res.status(401).json({ mensagem: 'E-mail ou senha incorretos!' });
-            }
-
-            // 3. Gera o Token JWT (a "chave" que mantém o usuário logado)
-            // Obs: A senha secreta ('senha-secreta-do-jwt') deve ir para um arquivo .env depois!
-            const token = jwt.sign({ id: user.id }, 'senha-secreta-do-jwt', { expiresIn: '1d' });
-
-            // 4. Retorna sucesso removendo a senha dos dados por segurança
-            const { password: _, ...userWithoutPassword } = user;
-            
-            return res.status(200).json({
-                user: userWithoutPassword,
-                token: token
-            });
-
-        } catch (error) {
-            console.error(error);
-            return res.status(500).json({ mensagem: 'Erro interno no servidor.' });
+        if (!user) {
+            console.log('Erro: E-mail não existe.');
+            return res.status(401).json({ mensagem: 'E-mail ou senha incorretos!' });
         }
-    }
 
+        const isValidPassword = await bcrypt.compare(password, user.password);
+        console.log('Senha válida?', isValidPassword ? 'SIM' : 'NÃO'); // ⬅️ RASTREADOR 4
+
+        if (!isValidPassword) {
+            console.log('Erro: Senha errada.');
+            return res.status(401).json({ mensagem: 'E-mail ou senha incorretos!' });
+        }
+
+        const token = jwt.sign({ id: user.id, role: user.role }, 'SEU_SEGREDO_JWT', { expiresIn: '1d' });
+
+        const { password: _, ...userWithoutPassword } = user;
+        
+        console.log('Login bem-sucedido! Retornando dados para o Front...'); // ⬅️ RASTREADOR 5
+        return res.status(200).json({
+            token,
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: user.role
+            }
+        });
+
+    } catch (error) {
+        console.error('ERRO NO CATCH DO BACK-END:', error); // ⬅️ RASTREADOR DE ERRO
+        return res.status(500).json({ mensagem: 'Erro interno no servidor.' });
+    }
+}
    async getProfile(req: Request, res: Response): Promise < any > {
         try {
             const userId = (req as any).userId;
             const userRepository = AppDataSource.getRepository(User);
             
-            // 2. Adicione o repositório de endereços aqui
             const enderecoRepository = AppDataSource.getRepository(Endereco); 
 
             const user = await userRepository.findOneBy({ id: userId });
@@ -92,14 +99,12 @@ export class UserController {
                 return res.status(404).json({ mensagem: 'Usuário não encontrado.' });
             }
 
-            // 3. Busca todos os endereços vinculados a este usuário
             const enderecosDoUsuario = await enderecoRepository.find({
                 where: { user: { id: userId } }
             });
 
             const { password, ...userWithoutPassword } = user;
             
-            // 4. Retorna os dados do usuário + a lista de endereços
             return res.status(200).json({
                 ...userWithoutPassword,
                 enderecos: enderecosDoUsuario

@@ -15,12 +15,15 @@ export class User {
     @Column({ type: "varchar", length: 255 })
     password!: string;
 
-    // NOVAS COLUNAS ADICIONADAS AQUI:
     @Column({ type: "varchar", length: 20, nullable: true })
     telefone!: string;
 
     @Column({ type: "varchar", length: 20, nullable: true })
     dataNascimento!: string;
+
+    // ⬅️ NOVA COLUNA ADICIONADA AQUI (Define se é 'cliente' ou 'admin')
+    @Column({ type: "varchar", length: 20, default: "cliente" })
+    role!: string;
 
     @CreateDateColumn({ type: "timestamp" })
     createdAt!: Date;
