@@ -42,6 +42,9 @@ class Produto {
     @Column({ type: "boolean", default: false })
     popular!: boolean;
 
+    @Column({ type: "boolean", default: false })
+    destaque!: boolean;
+
 }
 
 export { Produto };

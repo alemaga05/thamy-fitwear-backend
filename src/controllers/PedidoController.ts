@@ -22,7 +22,7 @@ export class PedidoController {
     AppDataSource.getRepository(Pedido);
 
   private pedidoItemRepository =
-    AppDataSource.getRepository(PedidoItem);
+    AppDataSource.getRepository(PedidoItem); 
 
   private carrinhoRepository =
     AppDataSource.getRepository(Carrinho);

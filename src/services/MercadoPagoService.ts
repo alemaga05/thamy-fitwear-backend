@@ -1,8 +1,10 @@
+
 import dotenv from 'dotenv';
 import { MercadoPagoConfig, Order } from 'mercadopago';
 import { randomUUID } from 'crypto';
 
-dotenv.config({ override: true });
+// Não sobrescreve variáveis configuradas pela hospedagem.
+dotenv.config();
 
 class MercadoPagoService {
   private order: Order;
@@ -10,18 +12,9 @@ class MercadoPagoService {
   constructor() {
     const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 
-    console.log('==========================================');
-    console.log('🔐 MERCADO PAGO - DIAGNÓSTICO');
-    console.log('==========================================');
-    console.log('Token existe:', !!accessToken);
-    console.log('Tamanho:', accessToken?.length ?? 0);
-    console.log('Prefixo:', accessToken?.substring(0, 7) ?? 'NENHUM');
-    console.log('Últimos 4:', accessToken?.slice(-4) ?? 'NENHUM');
-    console.log('==========================================');
-
     if (!accessToken) {
       throw new Error(
-        'MERCADOPAGO_ACCESS_TOKEN não foi configurado no arquivo .env.'
+        'MERCADOPAGO_ACCESS_TOKEN não foi configurado.'
       );
     }
 
@@ -34,8 +27,7 @@ class MercadoPagoService {
 
     this.order = new Order(client);
 
-    console.log('✅ Cliente Mercado Pago configurado.');
-    console.log('==========================================');
+    console.log('Cliente Mercado Pago configurado.');
   }
 
   // =====================================================
@@ -43,152 +35,65 @@ class MercadoPagoService {
   // =====================================================
 
   async criarPix(params: {
-  valor: number;
-  descricao: string;
-  email: string;
-  externalReference: string;
-}) {
+    valor: number;
+    descricao: string;
+    email: string;
+    externalReference: string;
+  }) {
+    const {
+      valor,
+      descricao,
+      email,
+      externalReference
+    } = params;
 
-  const {
-    valor,
-    descricao,
-    email,
-    externalReference
-  } = params;
-
-  console.log('==========================================');
-  console.log('💚 CRIANDO ORDER PIX');
-  console.log('==========================================');
-  console.log('Valor:', Number(valor).toFixed(2));
-  console.log('E-mail:', email);
-  console.log('External Reference:', externalReference);
-  console.log('==========================================');
-
-  try {
-
-    const pedido = await this.order.create({
-
-      body: {
-
-        type: 'online',
-
-        processing_mode: 'automatic',
-
-        total_amount:
-          Number(valor).toFixed(2),
-
-        external_reference:
-          externalReference,
-
-        payer: {
-          email
-        },
-
-        transactions: {
-
-          payments: [
-
-            {
-
-              amount:
-                Number(valor).toFixed(2),
-
-              payment_method: {
-
-                // PIX
-                id: 'pix',
-
-                // Mercado Pago Orders API
-                type: 'bank_transfer'
-
+    try {
+      const pedido = await this.order.create({
+        body: {
+          type: 'online',
+          processing_mode: 'automatic',
+          total_amount: Number(valor).toFixed(2),
+          external_reference: externalReference,
+          payer: {
+            email
+          },
+          transactions: {
+            payments: [
+              {
+                amount: Number(valor).toFixed(2),
+                payment_method: {
+                  id: 'pix',
+                  type: 'bank_transfer'
+                }
               }
-
-            }
-
-          ]
-
+            ]
+          },
+          description: descricao
         },
+        requestOptions: {
+          idempotencyKey: randomUUID()
+        }
+      });
 
-        description:
-          descricao
+      console.log('Order PIX criada com sucesso.');
+      console.log('Order ID:', pedido?.id);
+      console.log('Status:', pedido?.status);
 
-      },
+      return pedido;
 
-      requestOptions: {
+    } catch (error: unknown) {
+      const erro = error as {
+        status?: number;
+        message?: string;
+      };
 
-        idempotencyKey:
-          randomUUID()
+      console.error('Erro ao criar Order PIX.');
+      console.error('Status HTTP:', erro?.status ?? 'Não informado');
+      console.error('Mensagem:', erro?.message ?? 'Erro não identificado');
 
-      }
-
-    });
-
-    console.log('==========================================');
-    console.log('✅ ORDER PIX CRIADA');
-    console.log('==========================================');
-
-    console.log(
-      'Order ID:',
-      pedido?.id
-    );
-
-    console.log(
-      'Status:',
-      pedido?.status
-    );
-
-    console.log(
-      'Status Detail:',
-      pedido?.status_detail
-    );
-
-    console.log('==========================================');
-
-    return pedido;
-
-  } catch (error: any) {
-
-    console.log('==========================================');
-    console.log('❌ ERRO AO CRIAR ORDER PIX');
-    console.log('==========================================');
-
-    console.error(
-      'Status HTTP:',
-      error?.status
-    );
-
-    console.error(
-      'Erro:',
-      error
-    );
-
-    // Tentar mostrar a resposta detalhada
-    if (error?.cause) {
-      console.error(
-        'Cause:',
-        error.cause
-      );
+      throw error;
     }
-
-    if (error?.causes) {
-      console.error(
-        'Causes:',
-        error.causes
-      );
-    }
-
-    if (error?.response) {
-      console.error(
-        'Response:',
-        error.response
-      );
-    }
-
-    console.log('==========================================');
-
-    throw error;
   }
-}
 
   // =====================================================
   // CARTÃO
@@ -205,7 +110,6 @@ class MercadoPagoService {
     identificationNumber: string;
     externalReference: string;
   }) {
-
     const {
       valor,
       descricao,
@@ -218,156 +122,60 @@ class MercadoPagoService {
       externalReference
     } = params;
 
-    console.log('==========================================');
-    console.log('💳 CRIANDO ORDER CARTÃO');
-    console.log('==========================================');
-
-    console.log(
-      'Valor:',
-      Number(valor).toFixed(2)
-    );
-
-    console.log(
-      'E-mail:',
-      email
-    );
-
-    console.log(
-      'Parcelas:',
-      installments
-    );
-
-    console.log(
-      'Payment Method:',
-      paymentMethodId
-    );
-
-    console.log(
-      'Token recebido:',
-      token ? 'SIM' : 'NÃO'
-    );
-
-    console.log(
-      'CPF recebido:',
-      identificationNumber ? 'SIM' : 'NÃO'
-    );
-
-    console.log(
-      'External Reference:',
-      externalReference
-    );
-
-    console.log('==========================================');
-
     try {
-
       const order = await this.order.create({
-
         body: {
-
           type: 'online',
-
           processing_mode: 'automatic',
-
-          total_amount:
-            Number(valor).toFixed(2),
-
-          external_reference:
-            externalReference,
-
+          total_amount: Number(valor).toFixed(2),
+          external_reference: externalReference,
           payer: {
             email,
-
             identification: {
               type: identificationType,
               number: identificationNumber
             }
           },
-
           transactions: {
-
             payments: [
-
               {
-
-                amount:
-                  Number(valor).toFixed(2),
-
+                amount: Number(valor).toFixed(2),
                 payment_method: {
-
-                  id:
-                    paymentMethodId,
-
-                  type:
-                    'credit_card',
-
-                  token:
-                    token,
-
-                  installments:
-                    Number(installments)
+                  id: paymentMethodId,
+                  type: 'credit_card',
+                  token,
+                  installments: Number(installments)
                 }
               }
             ]
-          }
+          },
+          description: descricao
         },
-
         requestOptions: {
-
-          idempotencyKey:
-            randomUUID()
+          idempotencyKey: randomUUID()
         }
       });
 
-      console.log('==========================================');
-      console.log('✅ ORDER CARTÃO CRIADA');
-      console.log('==========================================');
+      console.log('Order de cartão criada com sucesso.');
+      console.log('Order ID:', order.id);
+      console.log('Status:', order.status);
 
-      console.log(
-        'Order ID:',
-        order.id
-      );
+      const pagamento = order.transactions?.payments?.[0];
 
-      console.log(
-        'Status:',
-        order.status
-      );
-
-      console.log(
-        'Status Detail:',
-        order.status_detail
-      );
-
-      const pagamento =
-        order.transactions
-          ?.payments?.[0];
-
-      console.log(
-        'Payment ID:',
-        pagamento?.id
-      );
-
-      console.log(
-        'Payment Status:',
-        pagamento?.status
-      );
-
-      console.log(
-        'Payment Status Detail:',
-        pagamento?.status_detail
-      );
-
-      console.log('==========================================');
+      console.log('Payment ID:', pagamento?.id);
+      console.log('Payment Status:', pagamento?.status);
 
       return order;
 
-    } catch (error) {
+    } catch (error: unknown) {
+      const erro = error as {
+        status?: number;
+        message?: string;
+      };
 
-      console.error('==========================================');
-      console.error('❌ ERRO AO CRIAR ORDER CARTÃO');
-      console.error('==========================================');
-
-      console.error(error);
+      console.error('Erro ao criar Order de cartão.');
+      console.error('Status HTTP:', erro?.status ?? 'Não informado');
+      console.error('Mensagem:', erro?.message ?? 'Erro não identificado');
 
       throw error;
     }
