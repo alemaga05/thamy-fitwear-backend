@@ -1,3 +1,4 @@
+
 import {
     Entity,
     PrimaryGeneratedColumn,
@@ -5,6 +6,9 @@ import {
     CreateDateColumn,
     UpdateDateColumn
 } from "typeorm";
+
+// Modalidades de frete permitidas
+export type ModalidadeFrete = "GRATIS" | "FIXO";
 
 @Entity("configuracao_loja")
 export class ConfiguracaoLoja {
@@ -17,7 +21,7 @@ export class ConfiguracaoLoja {
         length: 20,
         default: "GRATIS"
     })
-    modalidadeFrete!: string;
+    modalidadeFrete!: ModalidadeFrete;
 
     @Column({
         type: "decimal",

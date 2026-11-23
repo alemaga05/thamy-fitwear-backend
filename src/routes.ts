@@ -8,6 +8,7 @@ import { adminMiddleware } from './middlewares/adminMiddleware';
 import { CategoriaController } from './controllers/CategoriaController';
 import { PedidoController } from './controllers/PedidoController';
 import { BannerController } from "./controllers/BannerController";
+import { ConfiguracaoLojaController } from './controllers/ConfiguracaoLojaController';
 
 
 const routes = Router();
@@ -18,6 +19,7 @@ const produtoController = new ProdutoController();
 const categoriaController = new CategoriaController();
 const pedidoController = new PedidoController();
 const bannerController = new BannerController();
+const configuracaoLojaController = new ConfiguracaoLojaController();
 
 // Rotas públicas (não precisam de token)
 routes.post('/cadastro', userController.create);
@@ -207,6 +209,29 @@ routes.delete(
   authMiddleware,
   adminMiddleware,
   bannerController.delete
+);
+
+// CONFIGURAÇÕES DE FRETE — SOMENTE ADMINISTRADOR
+
+// CONFIGURAÇÃO DE FRETE — CONSULTA PÚBLICA
+
+routes.get(
+  '/configuracoes/frete',
+  configuracaoLojaController.getFrete.bind(configuracaoLojaController)
+);
+
+routes.get(
+    '/admin/configuracoes/frete',
+    authMiddleware,
+    adminMiddleware,
+    configuracaoLojaController.getFrete.bind(configuracaoLojaController)
+);
+
+routes.put(
+    '/admin/configuracoes/frete',
+    authMiddleware,
+    adminMiddleware,
+    configuracaoLojaController.atualizarFrete.bind(configuracaoLojaController)
 );
 
 

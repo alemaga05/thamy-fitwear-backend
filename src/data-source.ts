@@ -14,17 +14,14 @@ import { PedidoItem } from "./entities/PedidoItem";
 import { Banner } from "./entities/Banner";
 import { ConfiguracaoLoja } from "./entities/ConfiguracaoLoja";
 
-// Carrega as variáveis de ambiente
 dotenv.config();
 
 const isProduction = process.env.NODE_ENV === "production";
 
-// Em produção, a sincronização automática fica sempre desativada.
-const synchronize = !isProduction &&
-    process.env.DB_SYNCHRONIZE === "true";
+const synchronize =
+    !isProduction && process.env.DB_SYNCHRONIZE === "true";
 
 const databaseHost = process.env.DB_HOST || "localhost";
-
 const databasePort = Number(process.env.DB_PORT) || 5432;
 
 export const AppDataSource = new DataSource({
@@ -43,6 +40,10 @@ export const AppDataSource = new DataSource({
 
     synchronize,
     logging: false,
+
+    migrations: [
+        __dirname + "/migrations/*.js"
+    ],
 
     entities: [
         User,

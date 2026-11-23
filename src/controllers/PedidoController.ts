@@ -9,7 +9,13 @@ import { Produto } from '../entities/Produto';
 import { User } from '../entities/User';
 import { Endereco } from '../entities/Endereco';
 
+import {
+  WebhookSignatureValidator,
+  InvalidWebhookSignatureError
+} from 'mercadopago';
+
 import mercadoPagoService from '../services/MercadoPagoService';
+import { ConfiguracaoLoja } from '../entities/ConfiguracaoLoja';
 
 
 export class PedidoController {
@@ -36,6 +42,64 @@ export class PedidoController {
   private enderecoRepository =
     AppDataSource.getRepository(Endereco);
 
+  private configuracaoLojaRepository =
+    AppDataSource.getRepository(ConfiguracaoLoja);
+
+  // =========================================================
+// CONFIGURAÇÃO E CÁLCULO DO FRETE
+// =========================================================
+
+private async obterValorFrete(): Promise<
+    { ok: true; valor: number } |
+    { ok: false; mensagem: string }
+> {
+    const configuracao =
+        await this.configuracaoLojaRepository.findOne({
+            where: { id: 1 }
+        });
+
+    if (!configuracao) {
+        return {
+            ok: false,
+            mensagem: 'Configuração de frete não encontrada.'
+        };
+    }
+
+    if (!configuracao.ativo) {
+        return {
+            ok: false,
+            mensagem: 'A finalização de compras está temporariamente indisponível. Tente novamente mais tarde.'
+        };
+    }
+
+    if (configuracao.modalidadeFrete === 'GRATIS') {
+        return {
+            ok: true,
+            valor: 0
+        };
+    }
+
+    if (configuracao.modalidadeFrete === 'FIXO') {
+        const valor = Number(configuracao.valorFreteFixo);
+
+        if (!Number.isFinite(valor) || valor <= 0) {
+            return {
+                ok: false,
+                mensagem: 'O valor do frete está inválido. Entre em contato com a loja.'
+            };
+        }
+
+        return {
+            ok: true,
+            valor: Math.round((valor + Number.EPSILON) * 100) / 100
+        };
+    }
+
+    return {
+        ok: false,
+        mensagem: 'A modalidade de frete configurada não é válida.'
+    };
+}
 
   // =========================================================
   // CRIAR PEDIDO - PIX
@@ -259,18 +323,22 @@ export class PedidoController {
 
 
       // -----------------------------------------------------
-      // FRETE
-      // -----------------------------------------------------
+// FRETE CONFIGURADO PELO ADMINISTRADOR
+// -----------------------------------------------------
 
-      const valorFrete =
-        0;
+    const resultadoFrete = await this.obterValorFrete();
 
+    if (!resultadoFrete.ok) {
+        return res.status(503).json({
+            mensagem: resultadoFrete.mensagem
+        });
+    }
 
-      const valorTotal =
+    const valorFrete = resultadoFrete.valor;
+
+    const valorTotal =
         valorSubtotal +
         valorFrete;
-
-
       // -----------------------------------------------------
       // NÚMERO DO PEDIDO
       // -----------------------------------------------------
@@ -456,6 +524,17 @@ export class PedidoController {
             gatewayPaymentId:
               pedidoSalvo.gatewayPaymentId
 
+          },
+
+          pagamento: {
+            qrCodeBase64:
+              pagamento?.payment_method?.qr_code_base64 || null,
+
+            qrCode:
+              pagamento?.payment_method?.qr_code || null,
+
+            ticketUrl:
+              pagamento?.payment_method?.ticket_url || null
           },
 
           mercadoPago: {
@@ -903,16 +982,22 @@ export class PedidoController {
 
 
       // -----------------------------------------------------
-      // FRETE
-      // -----------------------------------------------------
+// FRETE CONFIGURADO PELO ADMINISTRADOR
+// -----------------------------------------------------
 
-      const valorFrete =
-        0;
+const resultadoFrete = await this.obterValorFrete();
 
+if (!resultadoFrete.ok) {
+    return res.status(503).json({
+        mensagem: resultadoFrete.mensagem
+    });
+}
 
-      const valorTotal =
-        valorSubtotal +
-        valorFrete;
+const valorFrete = resultadoFrete.valor;
+
+const valorTotal =
+    valorSubtotal +
+    valorFrete;
 
 
       // -----------------------------------------------------
@@ -1625,547 +1710,275 @@ async atualizarStatusPedido(
   // WEBHOOK MERCADO PAGO
   // =========================================================
 
-  async webhookMercadoPago(
-    req: Request,
-    res: Response
-  ) {
-
-    try {
-
-      console.log('==========================================');
-      console.log('🔔 WEBHOOK MERCADO PAGO');
-      console.log('==========================================');
-
-      console.log(
-        'Body recebido:',
-        JSON.stringify(
-          req.body,
-          null,
-          2
-        )
-      );
-
-
-      // -----------------------------------------------------
-      // TIPO
-      // -----------------------------------------------------
-
-      const type =
-        req.body?.type ||
-        req.body?.action;
-
-
-      // -----------------------------------------------------
-      // ORDER ID
-      // -----------------------------------------------------
-
-      const orderId =
-        req.body?.data?.id;
-
-
-      console.log(
-        'Tipo:',
-        type
-      );
-
-      console.log(
-        'Order ID:',
-        orderId
-      );
-
-
-      if (!orderId) {
-
-        console.warn(
-          '⚠️ Webhook recebido sem data.id.'
-        );
-
-
-        return res.status(200).json({
-
-          recebido:
-            true
-
-        });
-
-      }
-
-
-      // -----------------------------------------------------
-      // TOKEN
-      // -----------------------------------------------------
-
-      const accessToken =
-        process.env.MERCADOPAGO_ACCESS_TOKEN;
-
-
-      if (!accessToken) {
-
-        console.error(
-          '❌ MERCADOPAGO_ACCESS_TOKEN não configurado.'
-        );
-
-
-        return res.status(500).json({
-
-          mensagem:
-            'Token do Mercado Pago não configurado.'
-
-        });
-
-      }
-
-
-      // -----------------------------------------------------
-      // BUSCA ORDER
-      // -----------------------------------------------------
-
-      const response =
-        await fetch(
-
-          `https://api.mercadopago.com/v1/orders/${orderId}`,
-
-          {
-
-            method:
-              'GET',
-
-            headers: {
-
-              Authorization:
-                `Bearer ${accessToken}`,
-
-              'Content-Type':
-                'application/json'
-
-            }
-
-          }
-
-        );
-
-
-      if (!response.ok) {
-
-        const erroTexto =
-          await response.text();
-
-
-        console.error(
-          '❌ Mercado Pago retornou erro:',
-          response.status,
-          erroTexto
-        );
-
-
-        return res.status(200).json({
-
-          recebido:
-            true,
-
-          erroMercadoPago:
-            response.status
-
-        });
-
-      }
-
-
-      const order =
-        await response.json();
-
-
-      console.log('==========================================');
-      console.log('📦 ORDER RECEBIDA');
-      console.log('==========================================');
-
-      console.log(
-        'Order ID:',
-        order?.id
-      );
-
-      console.log(
-        'Status:',
-        order?.status
-      );
-
-      console.log(
-        'Status Detail:',
-        order?.status_detail
-      );
-
-      console.log(
-        'External Reference:',
-        order?.external_reference
-      );
-
-      console.log('==========================================');
-
-
-      // -----------------------------------------------------
-      // REFERÊNCIA
-      // -----------------------------------------------------
-
-      const externalReference =
-        order?.external_reference;
-
-
-      if (!externalReference) {
-
-        console.warn(
-          '⚠️ Order sem external_reference.'
-        );
-
-
-        return res.status(200).json({
-
-          recebido:
-            true
-
-        });
-
-      }
-
-
-      // -----------------------------------------------------
-      // PEDIDO
-      // -----------------------------------------------------
-
-      const pedido =
-        await this.pedidoRepository.findOne({
-
-          where: {
-
-            numeroPedido:
-              externalReference
-
-          }
-
-        });
-
-
-      if (!pedido) {
-
-        console.warn(
-          `⚠️ Pedido ${externalReference} não encontrado no banco.`
-        );
-
-
-        return res.status(200).json({
-
-          recebido:
-            true
-
-        });
-
-      }
-
-
-      // -----------------------------------------------------
-      // PAYMENT
-      // -----------------------------------------------------
-
-      const pagamento =
-        order.transactions
-          ?.payments?.[0];
-
-
-      const statusOrder =
-        order?.status;
-
-
-      const statusDetail =
-        order?.status_detail;
-
-
-      const statusPagamento =
-        pagamento?.status;
-
-
-      const paymentId =
-        pagamento?.id;
-
-
-      // -----------------------------------------------------
-      // IDS
-      // -----------------------------------------------------
-
-      pedido.gateway =
-        'mercadopago';
-
-
-      pedido.gatewayOrderId =
-        order?.id
-          ? String(order.id)
-          : pedido.gatewayOrderId;
-
-
-      pedido.gatewayPaymentId =
-        paymentId
-          ? String(paymentId)
-          : pedido.gatewayPaymentId;
-
-
-      // =====================================================
-      // MÉTODO DE PAGAMENTO
-      // =====================================================
-
-      const paymentMethodType =
-        pagamento?.payment_method?.type;
-
-
-      if (
-        paymentMethodType ===
-        'credit_card'
-      ) {
-
-        pedido.metodoPagamento =
-          'cartao';
-
-      } else {
-
-        pedido.metodoPagamento =
-          'pix';
-
-      }
-
-
-      // =====================================================
-      // APROVADO
-      // =====================================================
-
-      if (
-
-        statusPagamento ===
-          'approved'
-
-        ||
-
-        (
-          statusOrder ===
-            'processed'
-
-          &&
-
-          statusDetail ===
-            'accredited'
-        )
-
-      ) {
-
-        pedido.statusPagamento =
-          'APROVADO';
-
-        pedido.statusPedido =
-          'PAGAMENTO_APROVADO';
-
-
-        console.log(
-          `✅ Pagamento aprovado para o pedido ${pedido.numeroPedido}.`
-        );
-
-      }
-
-
-      // =====================================================
-      // PENDENTE
-      // =====================================================
-
-      else if (
-
-        statusOrder ===
-          'action_required'
-
-        ||
-
-        statusPagamento ===
-          'pending'
-
-      ) {
-
-        pedido.statusPagamento =
-          'PENDENTE';
-
-        pedido.statusPedido =
-          'AGUARDANDO_PAGAMENTO';
-
-
-        console.log(
-          `⏳ Pagamento pendente para o pedido ${pedido.numeroPedido}.`
-        );
-
-      }
-
-
-      // =====================================================
-      // RECUSADO
-      // =====================================================
-
-      else if (
-
-        statusOrder ===
-          'failed'
-
-        ||
-
-        statusPagamento ===
-          'rejected'
-
-      ) {
-
-        pedido.statusPagamento =
-          'RECUSADO';
-
-        pedido.statusPedido =
-          'AGUARDANDO_PAGAMENTO';
-
-
-        console.log(
-          `❌ Pagamento recusado para o pedido ${pedido.numeroPedido}.`
-        );
-
-      }
-
-
-      // =====================================================
-      // CANCELADO / EXPIRADO
-      // =====================================================
-
-      else if (
-
-        statusOrder ===
-          'canceled'
-
-        ||
-
-        statusOrder ===
-          'expired'
-
-      ) {
-
-        pedido.statusPagamento =
-          'CANCELADO';
-
-        pedido.statusPedido =
-          'CANCELADO';
-
-
-        console.log(
-          `🚫 Pagamento cancelado/expirado para o pedido ${pedido.numeroPedido}.`
-        );
-
-      }
-
-
-      // =====================================================
-      // ESTORNADO
-      // =====================================================
-
-      else if (
-
-        statusOrder ===
-          'refunded'
-
-        ||
-
-        statusPagamento ===
-          'refunded'
-
-      ) {
-
-        pedido.statusPagamento =
-          'ESTORNADO';
-
-        pedido.statusPedido =
-          'CANCELADO';
-
-
-        console.log(
-          `↩️ Pagamento estornado para o pedido ${pedido.numeroPedido}.`
-        );
-
-      }
-
-
-      // -----------------------------------------------------
-      // SALVA
-      // -----------------------------------------------------
-
-      await this.pedidoRepository.save(
-        pedido
-      );
-
-
-      console.log('==========================================');
-      console.log('✅ WEBHOOK PROCESSADO');
-      console.log('==========================================');
-
-      console.log(
-        'Pedido:',
-        pedido.numeroPedido
-      );
-
-      console.log(
-        'Método:',
-        pedido.metodoPagamento
-      );
-
-      console.log(
-        'Status pagamento:',
-        pedido.statusPagamento
-      );
-
-      console.log(
-        'Status pedido:',
-        pedido.statusPedido
-      );
-
-      console.log('==========================================');
-
-
-      return res.status(200).json({
-
-        recebido:
-          true,
-
-        pedido:
-          pedido.numeroPedido,
-
-        statusPagamento:
-          pedido.statusPagamento,
-
-        statusPedido:
-          pedido.statusPedido
-
-      });
-
-
-    } catch (error) {
-
-      console.error('==========================================');
-      console.error('❌ ERRO NO WEBHOOK MERCADO PAGO');
-      console.error('==========================================');
-
-      console.error(
-        error
-      );
-
-      console.error('==========================================');
-
-
-      return res.status(200).json({
-
-        recebido:
-          true,
-
-        erro:
-          'Erro interno ao processar webhook.'
-
-      });
-
+  
+async webhookMercadoPago(req: Request, res: Response) {
+  try {
+    // 1. Validar configuração
+    const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
+    const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+
+    if (!secret || !accessToken) {
+      console.error('Configuração do Webhook incompleta.');
+      return res.sendStatus(500);
     }
 
+    // 2. Obter identificadores da notificação
+    const dataId = req.query['data.id'];
+    const xSignature = req.header('x-signature');
+    const xRequestId = req.header('x-request-id');
+
+    if (
+      typeof dataId !== 'string' ||
+      !dataId ||
+      !xSignature ||
+      !xRequestId
+    ) {
+      console.warn('Webhook recebido sem os dados necessários.');
+      return res.sendStatus(400);
+    }
+
+    // Confere se o ID da URL corresponde ao corpo recebido.
+    const bodyId = req.body?.data?.id;
+
+    if (bodyId && String(bodyId) !== dataId) {
+      console.warn('IDs divergentes no Webhook.');
+      return res.sendStatus(400);
+    }
+
+    console.log('=== DIAGNÓSTICO WEBHOOK ===');
+
+console.log('Data ID:', dataId);
+console.log('Request ID presente:', Boolean(xRequestId));
+console.log('Signature presente:', Boolean(xSignature));
+console.log('Secret configurado:', Boolean(secret));
+console.log('Formato da assinatura:', xSignature?.split(',').map(
+  parte => parte.split('=')[0]
+));
+
+console.log('===========================');
+
+    // 3. Validar assinatura oficial do Mercado Pago
+    try {
+      WebhookSignatureValidator.validate({
+        xSignature,
+        xRequestId,
+        dataId: dataId.toLowerCase(),
+        secret
+      });
+    } catch (error) {
+      if (error instanceof InvalidWebhookSignatureError) {
+        console.warn('Assinatura inválida no Webhook.');
+        return res.sendStatus(401);
+      }
+
+      throw error;
+    }
+
+    console.log('Assinatura do Webhook validada.');
+
+    // 4. Consultar a Order diretamente no Mercado Pago
+    const response = await fetch(
+      `https://api.mercadopago.com/v1/orders/${encodeURIComponent(dataId)}`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (!response.ok) {
+      console.error(
+        'Falha ao consultar Order no Mercado Pago:',
+        response.status
+      );
+
+      return res.sendStatus(500);
+    }
+
+    const order = await response.json() as any;
+
+    // 5. Conferir identificadores
+    if (String(order?.id) !== dataId) {
+      console.error('Order retornada com ID divergente.');
+      return res.sendStatus(400);
+    }
+
+    const externalReference = order?.external_reference;
+
+    if (!externalReference) {
+      console.warn('Order sem external_reference.');
+      return res.sendStatus(200);
+    }
+
+    const pagamento = order?.transactions?.payments?.[0];
+
+    const statusOrder = order?.status;
+    const statusPagamento = pagamento?.status;
+    const statusDetail = order?.status_detail;
+
+    // 6. Validar os valores
+    const valorPedido = Number(order?.total_amount);
+    const valorPagamento = Number(pagamento?.amount);
+
+    if (!Number.isFinite(valorPedido)) {
+      console.error('Valor da Order inválido.');
+      return res.sendStatus(500);
+    }
+
+    // Localizar pedido e atualizar com bloqueio transacional.
+    const resultado = await this.pedidoRepository.manager.transaction(
+      async (manager) => {
+        const repository = manager.getRepository(Pedido);
+
+        const pedido = await repository.findOne({
+          where: {
+            numeroPedido: externalReference
+          },
+          lock: {
+            mode: 'pessimistic_write'
+          }
+        });
+
+        if (!pedido) {
+          return { encontrado: false };
+        }
+
+        // Confere se a Order pertence ao pedido esperado.
+        if (
+          pedido.gatewayOrderId &&
+          pedido.gatewayOrderId !== dataId
+        ) {
+          console.error('Order não corresponde ao pedido cadastrado.');
+          return { conflito: true };
+        }
+
+        const valorEsperado = Number(pedido.valorTotal);
+
+        if (
+          !Number.isFinite(valorEsperado) ||
+          Math.abs(valorPedido - valorEsperado) > 0.01
+        ) {
+          console.error('Valor da Order diferente do pedido.');
+          return { valorInvalido: true };
+        }
+
+        // Uma aprovação exige também a conferência do pagamento.
+        const aprovado =
+          statusPagamento === 'approved' ||
+          (
+            statusOrder === 'processed' &&
+            statusDetail === 'accredited'
+          );
+
+        if (
+          aprovado &&
+          (
+            !Number.isFinite(valorPagamento) ||
+            Math.abs(valorPagamento - valorEsperado) > 0.01
+          )
+        ) {
+          console.error('Valor do pagamento diferente do pedido.');
+          return { valorInvalido: true };
+        }
+
+        pedido.gateway = 'mercadopago';
+        pedido.gatewayOrderId = String(order.id);
+
+        if (pagamento?.id) {
+          pedido.gatewayPaymentId = String(pagamento.id);
+        }
+
+        const paymentMethodType =
+          pagamento?.payment_method?.type;
+
+        if (paymentMethodType === 'credit_card') {
+          pedido.metodoPagamento = 'cartao';
+        } else if (paymentMethodType === 'bank_transfer') {
+          pedido.metodoPagamento = 'pix';
+        }
+
+        const estornado =
+          statusOrder === 'refunded' ||
+          statusPagamento === 'refunded' ||
+          statusPagamento === 'charged_back';
+
+        const pendente =
+          statusOrder === 'action_required' ||
+          statusPagamento === 'pending' ||
+          statusPagamento === 'in_process';
+
+        const recusado =
+          statusOrder === 'failed' ||
+          statusPagamento === 'rejected';
+
+        const cancelado =
+          statusOrder === 'canceled' ||
+          statusOrder === 'expired' ||
+          statusPagamento === 'cancelled';
+
+        // 7. Aplicar transições de status
+        if (estornado) {
+          pedido.statusPagamento = 'ESTORNADO';
+          pedido.statusPedido = 'CANCELADO';
+
+        } else if (aprovado) {
+          pedido.statusPagamento = 'APROVADO';
+          pedido.statusPedido = 'PAGAMENTO_APROVADO';
+
+        } else if (pedido.statusPagamento === 'APROVADO') {
+          // Não permite que notificações antigas rebaixem uma aprovação.
+          console.log(
+            'Pedido já aprovado. Notificação antiga ignorada.'
+          );
+
+        } else if (pendente) {
+          pedido.statusPagamento = 'PENDENTE';
+          pedido.statusPedido = 'AGUARDANDO_PAGAMENTO';
+
+        } else if (recusado) {
+          pedido.statusPagamento = 'RECUSADO';
+          pedido.statusPedido = 'AGUARDANDO_PAGAMENTO';
+
+        } else if (cancelado) {
+          pedido.statusPagamento = 'CANCELADO';
+          pedido.statusPedido = 'CANCELADO';
+        }
+
+        await repository.save(pedido);
+
+        return {
+          encontrado: true,
+          numeroPedido: pedido.numeroPedido,
+          statusPagamento: pedido.statusPagamento,
+          statusPedido: pedido.statusPedido
+        };
+      }
+    );
+
+    if ('encontrado' in resultado && !resultado.encontrado) {
+      console.warn('Pedido não encontrado.');
+      return res.sendStatus(200);
+    }
+
+    if ('conflito' in resultado || 'valorInvalido' in resultado) {
+      return res.sendStatus(409);
+    }
+
+    console.log('Webhook processado:', resultado);
+
+    return res.status(200).json({
+      recebido: true,
+      ...resultado
+    });
+
+  } catch (error) {
+    console.error('Erro ao processar Webhook:', error);
+    return res.sendStatus(500);
   }
+}
+
 
 }
 
